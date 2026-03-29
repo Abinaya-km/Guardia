@@ -36,17 +36,12 @@ app.config['MAIL_USERNAME'] = os.getenv("EMAIL_USER")
 app.config['MAIL_PASSWORD'] = os.getenv("EMAIL_PASS")
 
 # -------- DATABASE --------
-import urllib.parse
-
-url = os.getenv("MYSQL_PUBLIC_URL")
-parsed = urllib.parse.urlparse(url)
-
 db = mysql.connector.connect(
-    host=parsed.hostname,
-    user=parsed.username,
-    password=parsed.password,
-    database=parsed.path[1:],
-    port=parsed.port
+    host=os.getenv("MYSQLHOST"),
+    user=os.getenv("MYSQLUSER"),
+    password=os.getenv("MYSQLPASSWORD"),
+    database=os.getenv("MYSQLDATABASE"),
+    port=int(os.getenv("MYSQLPORT"))
 )
 cursor = db.cursor(dictionary=True)
 print(" Connected to Railway DB")
