@@ -70,10 +70,13 @@ def connect_db():
 
 connect_db()
 
-# ---------------- HOME ----------------
+# ---------------- HOME (VERY IMPORTANT) ----------------
 @app.route("/")
 def home():
-    return "Backend Running 🚀"
+    return jsonify({
+        "status": "OK",
+        "message": "Backend Running 🚀"
+    })
 
 # ---------------- GOOGLE ----------------
 def get_nearest_police(lat, lon):
@@ -104,7 +107,7 @@ def send_alert():
             return jsonify({"status": "error", "message": "DB not connected"}), 500
 
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(silent=True) or {}
 
         user_id = data.get("user_id")
         latitude = float(data.get("latitude", 0))
@@ -144,13 +147,11 @@ def send_alert():
 # ---------------- REGISTER ----------------
 @app.route("/register", methods=["POST"])
 def register():
-    global db, cursor
-
     if not cursor:
         return jsonify({"status": "error", "message": "DB not connected"}), 500
 
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(silent=True) or {}
 
         cursor.execute(
             "INSERT INTO users (name, age, email, password) VALUES (%s,%s,%s,%s)",
@@ -176,7 +177,7 @@ def login():
         return jsonify({"status": "error", "message": "DB not connected"}), 500
 
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(silent=True) or {}
 
         cursor.execute("SELECT * FROM users WHERE email=%s", (data.get("email"),))
         user = cursor.fetchone()
@@ -195,3 +196,8 @@ def login():
 def handle_exception(e):
     print("GLOBAL ERROR:", e)
     return jsonify({"error": str(e)}), 500
+
+# ---------------- PORT FIX (CRITICAL) ----------------
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
