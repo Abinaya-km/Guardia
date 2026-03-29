@@ -1,0 +1,7 @@
+flask
+flask-cors
+flask-mail
+mysql-connector-python
+requests
+twilio
+python-dotenv
