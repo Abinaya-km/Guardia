@@ -25,10 +25,13 @@ auth_token = os.getenv("TWILIO_AUTH_TOKEN")
 twilio_number = os.getenv("TWILIO_PHONE")
 
 # ---------------- TWILIO ----------------
+client = None
 if account_sid and auth_token:
-    client = Client(account_sid, auth_token)
+    try:
+        client = Client(account_sid, auth_token)
+    except Exception as e:
+        print("Twilio init error:", e)
 else:
-    client = None
     print("Twilio not configured")
 
 # ---------------- MAIL ----------------
@@ -38,27 +41,34 @@ app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = os.getenv("EMAIL_USER")
 app.config['MAIL_PASSWORD'] = os.getenv("EMAIL_PASS")
 
+mail = None
 try:
     mail = Mail(app)
 except Exception as e:
     print("Mail error:", e)
-    mail = None
 
 # ---------------- DATABASE ----------------
-try:
-    db = mysql.connector.connect(
-        host=os.getenv("MYSQLHOST"),
-        user=os.getenv("MYSQLUSER"),
-        password=os.getenv("MYSQLPASSWORD"),
-        database=os.getenv("MYSQLDATABASE"),
-        port=int(os.getenv("MYSQLPORT", 3306))
-    )
-    cursor = db.cursor(dictionary=True)
-    print("Connected to Railway DB")
-except Exception as e:
-    print("DB ERROR:", e)
-    db = None
-    cursor = None
+db = None
+cursor = None
+
+def connect_db():
+    global db, cursor
+    try:
+        db = mysql.connector.connect(
+            host=os.getenv("MYSQLHOST"),
+            user=os.getenv("MYSQLUSER"),
+            password=os.getenv("MYSQLPASSWORD"),
+            database=os.getenv("MYSQLDATABASE"),
+            port=int(os.getenv("MYSQLPORT", 3306))
+        )
+        cursor = db.cursor(dictionary=True)
+        print("Connected to Railway DB")
+    except Exception as e:
+        print("DB ERROR:", e)
+        db = None
+        cursor = None
+
+connect_db()
 
 # ---------------- HOME ----------------
 @app.route("/")
@@ -68,7 +78,6 @@ def home():
 # ---------------- GOOGLE ----------------
 def get_nearest_police(lat, lon):
     if not GOOGLE_API_KEY:
-        print("Google API key missing")
         return "Police Station Nearby"
 
     try:
@@ -76,7 +85,7 @@ def get_nearest_police(lat, lon):
         response = requests.get(url, timeout=5)
         data = response.json()
 
-        if "results" in data and len(data["results"]) > 0:
+        if "results" in data and data["results"]:
             return data["results"][0]["name"]
 
     except Exception as e:
@@ -87,11 +96,15 @@ def get_nearest_police(lat, lon):
 # ---------------- SEND ALERT ----------------
 @app.route("/send_alert", methods=["POST"])
 def send_alert():
-    if not cursor:
-        return jsonify({"status": "error", "message": "DB not connected"}), 500
+    global db, cursor
+
+    if not db or not cursor:
+        connect_db()
+        if not cursor:
+            return jsonify({"status": "error", "message": "DB not connected"}), 500
 
     try:
-        data = request.get_json() or {}
+        data = request.get_json(force=True) or {}
 
         user_id = data.get("user_id")
         latitude = float(data.get("latitude", 0))
@@ -131,16 +144,22 @@ def send_alert():
 # ---------------- REGISTER ----------------
 @app.route("/register", methods=["POST"])
 def register():
+    global db, cursor
+
     if not cursor:
         return jsonify({"status": "error", "message": "DB not connected"}), 500
 
     try:
-        data = request.get_json() or {}
-        hashed_password = generate_password_hash(data.get("password", ""))
+        data = request.get_json(force=True) or {}
 
         cursor.execute(
             "INSERT INTO users (name, age, email, password) VALUES (%s,%s,%s,%s)",
-            (data.get("name"), data.get("age"), data.get("email"), hashed_password)
+            (
+                data.get("name"),
+                data.get("age"),
+                data.get("email"),
+                generate_password_hash(data.get("password", ""))
+            )
         )
         db.commit()
 
@@ -148,7 +167,7 @@ def register():
 
     except Exception as e:
         print("REGISTER ERROR:", e)
-        return jsonify({"status": "error", "message": "Email exists or DB error"})
+        return jsonify({"status": "error", "message": "Registration failed"})
 
 # ---------------- LOGIN ----------------
 @app.route("/login", methods=["POST"])
@@ -157,87 +176,22 @@ def login():
         return jsonify({"status": "error", "message": "DB not connected"}), 500
 
     try:
-        data = request.get_json() or {}
+        data = request.get_json(force=True) or {}
 
         cursor.execute("SELECT * FROM users WHERE email=%s", (data.get("email"),))
         user = cursor.fetchone()
 
         if user and check_password_hash(user["password"], data.get("password")):
             return jsonify({"status": "success"})
-        else:
-            return jsonify({"status": "error", "message": "Invalid credentials"})
+
+        return jsonify({"status": "error", "message": "Invalid credentials"})
 
     except Exception as e:
         print("LOGIN ERROR:", e)
         return jsonify({"status": "error", "message": "Login failed"})
 
-# ---------------- FORGOT PASSWORD ----------------
-@app.route("/forgot_password", methods=["POST"])
-def forgot_password():
-    if not cursor:
-        return jsonify({"status": "error", "message": "DB not connected"}), 500
-
-    try:
-        data = request.get_json() or {}
-        email = data.get("email")
-
-        cursor.execute("SELECT * FROM users WHERE email=%s", (email,))
-        user = cursor.fetchone()
-
-        if not user:
-            return jsonify({"status": "error", "message": "Email not found"})
-
-        otp = str(random.randint(100000, 999999))
-
-        cursor.execute(
-            "INSERT INTO password_resets (email, otp, created_at) VALUES (%s,%s,%s)",
-            (email, otp, datetime.now())
-        )
-        db.commit()
-
-        if mail:
-            msg = Message(
-                subject="Password Reset OTP",
-                sender=app.config['MAIL_USERNAME'],
-                recipients=[email]
-            )
-            msg.body = f"Your OTP is {otp}"
-            mail.send(msg)
-
-        return jsonify({"status": "success"})
-
-    except Exception as e:
-        print("FORGOT ERROR:", e)
-        return jsonify({"status": "error", "message": "Failed"})
-
-# ---------------- RESET PASSWORD ----------------
-@app.route("/reset_password", methods=["POST"])
-def reset_password():
-    if not cursor:
-        return jsonify({"status": "error", "message": "DB not connected"}), 500
-
-    try:
-        data = request.get_json() or {}
-
-        cursor.execute(
-            "SELECT * FROM password_resets WHERE email=%s AND otp=%s ORDER BY id DESC LIMIT 1",
-            (data.get("email"), data.get("otp"))
-        )
-        record = cursor.fetchone()
-
-        if not record:
-            return jsonify({"status": "error", "message": "Invalid OTP"})
-
-        new_password = generate_password_hash(data.get("new_password"))
-
-        cursor.execute(
-            "UPDATE users SET password=%s WHERE email=%s",
-            (new_password, data.get("email"))
-        )
-        db.commit()
-
-        return jsonify({"status": "success"})
-
-    except Exception as e:
-        print("RESET ERROR:", e)
-        return jsonify({"status": "error", "message": "Failed"})
+# ---------------- GLOBAL ERROR HANDLER ----------------
+@app.errorhandler(Exception)
+def handle_exception(e):
+    print("GLOBAL ERROR:", e)
+    return jsonify({"error": str(e)}), 500
