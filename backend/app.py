@@ -1,4 +1,5 @@
 import os
+import traceback
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
@@ -17,6 +18,8 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+print("🚀 APP STARTED")
+
 # ---------------- CONFIG ----------------
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
@@ -29,6 +32,7 @@ client = None
 if account_sid and auth_token:
     try:
         client = Client(account_sid, auth_token)
+        print("Twilio connected")
     except Exception as e:
         print("Twilio init error:", e)
 else:
@@ -44,6 +48,7 @@ app.config['MAIL_PASSWORD'] = os.getenv("EMAIL_PASS")
 mail = None
 try:
     mail = Mail(app)
+    print("Mail configured")
 except Exception as e:
     print("Mail error:", e)
 
@@ -62,18 +67,18 @@ def connect_db():
             port=int(os.getenv("MYSQLPORT", 3306))
         )
         cursor = db.cursor(dictionary=True)
-        print("Connected to Railway DB")
+        print("✅ Connected to Railway DB")
     except Exception as e:
-        print("DB ERROR:", e)
+        print("❌ DB ERROR:", e)
         db = None
         cursor = None
 
 connect_db()
 
-# ---------------- HOME (CRITICAL FIX) ----------------
-@app.route("/", methods=["GET"])
+# ---------------- HOME ----------------
+@app.route("/")
 def home():
-    return "OK", 200
+    return "RUNNING"
 
 # ---------------- GOOGLE ----------------
 def get_nearest_police(lat, lon):
@@ -191,5 +196,7 @@ def login():
 # ---------------- GLOBAL ERROR HANDLER ----------------
 @app.errorhandler(Exception)
 def handle_exception(e):
-    print("GLOBAL ERROR:", e)
-    return jsonify({"error": str(e)}), 500
+    print("🔥 GLOBAL ERROR START 🔥")
+    traceback.print_exc()
+    print("🔥 GLOBAL ERROR END 🔥")
+    return "Internal Server Error", 500
