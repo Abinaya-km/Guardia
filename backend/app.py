@@ -1,3 +1,5 @@
+
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
@@ -9,7 +11,7 @@ import requests
 from twilio.rest import Client
 
 from dotenv import load_dotenv
-import os
+
 
 load_dotenv()
 
@@ -34,10 +36,17 @@ app.config['MAIL_USERNAME'] = os.getenv("EMAIL_USER")
 app.config['MAIL_PASSWORD'] = os.getenv("EMAIL_PASS")
 
 # -------- DATABASE --------
+import urllib.parse
+
+url = os.getenv("MYSQL_PUBLIC_URL")
+parsed = urllib.parse.urlparse(url)
+
 db = mysql.connector.connect(
-    host="hopper.proxy.rlwy.net",
-    user="root",
-    password=os.getenv("DB_PASSWORD"),
+    host=parsed.hostname,
+    user=parsed.username,
+    password=parsed.password,
+    database=parsed.path[1:],
+    port=parsed.port
 )
 cursor = db.cursor(dictionary=True)
 print(" Connected to Railway DB")
@@ -212,5 +221,8 @@ def reset_password():
     return jsonify({"status": "success"})
 
 # ---------------- RUN ----------------
+
+port = int(os.environ.get("PORT", 5000))
+
 if __name__ == "__main__":
-    app.run()
+    app.run(host="0.0.0.0", port=port)
