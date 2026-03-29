@@ -70,13 +70,10 @@ def connect_db():
 
 connect_db()
 
-# ---------------- HOME (VERY IMPORTANT) ----------------
-@app.route("/")
+# ---------------- HOME (CRITICAL FIX) ----------------
+@app.route("/", methods=["GET"])
 def home():
-    return jsonify({
-        "status": "OK",
-        "message": "Backend Running 🚀"
-    })
+    return "OK", 200
 
 # ---------------- GOOGLE ----------------
 def get_nearest_police(lat, lon):
@@ -196,8 +193,3 @@ def login():
 def handle_exception(e):
     print("GLOBAL ERROR:", e)
     return jsonify({"error": str(e)}), 500
-
-# ---------------- PORT FIX (CRITICAL) ----------------
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
