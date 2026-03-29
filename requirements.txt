@@ -1,5 +1,7 @@
-Flask
+flask
 flask-cors
 flask-mail
 mysql-connector-python
-Werkzeug
+requests
+twilio
+python-dotenv
