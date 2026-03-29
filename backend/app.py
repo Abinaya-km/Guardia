@@ -1,5 +1,7 @@
 
 import os
+from flask import Flask, jsonify
+app = Flask(__name__)
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
@@ -26,7 +28,11 @@ twilio_number = os.getenv("TWILIO_PHONE")
 app = Flask(__name__)
 CORS(app)
 
-client = Client(account_sid, auth_token)
+if account_sid and auth_token:
+    client = Client(account_sid, auth_token)
+else:
+    client = None
+    print("Twilio not configured")
 
 # -------- MAIL CONFIG --------
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
@@ -49,22 +55,22 @@ print(" Connected to Railway DB")
 
 # ---------------- GOOGLE FUNCTION ----------------
 def get_nearest_police(lat, lon):
-    try:
-        url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius=5000&type=police&key={GOOGLE_API_KEY}"
-        
-        response = requests.get(url)
-        data = response.json()
 
-        print("GOOGLE RESPONSE:", data)  # DEBUG
-
-        if "results" in data and len(data["results"]) > 0:
-            return data["results"][0]["name"]
-
+    if not GOOGLE_API_KEY:
+        print("Google API key missing")
         return "Police Station Nearby"
 
-    except Exception as e:
-        print("GOOGLE ERROR:", e)
-        return "Police Station Nearby"
+    url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius=5000&type=police&key={GOOGLE_API_KEY}"
+
+    response = requests.get(url)
+    data = response.json()
+
+    print("GOOGLE RESPONSE:", data)
+
+    if "results" in data and len(data["results"]) > 0:
+        return data["results"][0]["name"]
+
+    return "Police Station Nearby"
 
 # ---------------- HOME ----------------
 @app.route("/")
@@ -84,6 +90,7 @@ def send_alert():
 
     # STEP 1: GOOGLE → nearest police
     station_name = get_nearest_police(latitude, longitude)
+
 
     # ✅ STEP 2: DB → get phone (FIXED INDENTATION)
     cursor.execute("SELECT phone FROM police_stations LIMIT 1")
