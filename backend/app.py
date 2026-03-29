@@ -69,7 +69,7 @@ def get_nearest_police(lat, lon):
 # ---------------- HOME ----------------
 @app.route("/")
 def home():
-    return "Backend Running"
+    return "Backend Running v2"
 
 @app.route("/send_alert", methods=["POST"])
 def send_alert():
