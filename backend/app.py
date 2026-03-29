@@ -1,7 +1,4 @@
-
 import os
-from flask import Flask, jsonify
-app = Flask(__name__)
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
@@ -12,73 +9,83 @@ import random
 import requests
 from twilio.rest import Client
 
-from dotenv import load_dotenv
+# ---------------- INIT ----------------
+app = Flask(__name__)
+CORS(app)
 
-
-load_dotenv()
-
-# -------- CONFIG --------
+# ---------------- CONFIG ----------------
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 account_sid = os.getenv("TWILIO_ACCOUNT_SID")
 auth_token = os.getenv("TWILIO_AUTH_TOKEN")
 twilio_number = os.getenv("TWILIO_PHONE")
 
-# -------- INIT --------
-app = Flask(__name__)
-CORS(app)
-
+# ---------------- TWILIO SAFE INIT ----------------
 if account_sid and auth_token:
     client = Client(account_sid, auth_token)
 else:
     client = None
     print("Twilio not configured")
 
-# -------- MAIL CONFIG --------
+# ---------------- MAIL CONFIG ----------------
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = os.getenv("EMAIL_USER")
 app.config['MAIL_PASSWORD'] = os.getenv("EMAIL_PASS")
 
-# -------- DATABASE --------
-db = mysql.connector.connect(
-    host=os.getenv("MYSQLHOST"),
-    user=os.getenv("MYSQLUSER"),
-    password=os.getenv("MYSQLPASSWORD"),
-    database=os.getenv("MYSQLDATABASE"),
-    port=int(os.getenv("MYSQLPORT",3306))
-)
-cursor = db.cursor(dictionary=True)
-print(" Connected to Railway DB")
+try:
+    mail = Mail(app)
+except Exception as e:
+    print("Mail error:", e)
+    mail = None
 
-
-# ---------------- GOOGLE FUNCTION ----------------
-def get_nearest_police(lat, lon):
-
-    if not GOOGLE_API_KEY:
-        print("Google API key missing")
-        return "Police Station Nearby"
-
-    url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius=5000&type=police&key={GOOGLE_API_KEY}"
-
-    response = requests.get(url)
-    data = response.json()
-
-    print("GOOGLE RESPONSE:", data)
-
-    if "results" in data and len(data["results"]) > 0:
-        return data["results"][0]["name"]
-
-    return "Police Station Nearby"
+# ---------------- DATABASE SAFE CONNECT ----------------
+try:
+    db = mysql.connector.connect(
+        host=os.getenv("MYSQLHOST"),
+        user=os.getenv("MYSQLUSER"),
+        password=os.getenv("MYSQLPASSWORD"),
+        database=os.getenv("MYSQLDATABASE"),
+        port=int(os.getenv("MYSQLPORT", 3306))
+    )
+    cursor = db.cursor(dictionary=True)
+    print("Connected to Railway DB")
+except Exception as e:
+    print("DB ERROR:", e)
+    db = None
+    cursor = None
 
 # ---------------- HOME ----------------
 @app.route("/")
 def home():
-    return "Backend Running v2"
+    return "Backend Running 🚀"
 
+# ---------------- GOOGLE FUNCTION ----------------
+def get_nearest_police(lat, lon):
+    if not GOOGLE_API_KEY:
+        print("Google API key missing")
+        return "Police Station Nearby"
+
+    try:
+        url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius=5000&type=police&key={GOOGLE_API_KEY}"
+        response = requests.get(url)
+        data = response.json()
+
+        if "results" in data and len(data["results"]) > 0:
+            return data["results"][0]["name"]
+
+    except Exception as e:
+        print("Google API error:", e)
+
+    return "Police Station Nearby"
+
+# ---------------- SEND ALERT ----------------
 @app.route("/send_alert", methods=["POST"])
 def send_alert():
+    if not cursor:
+        return jsonify({"status": "error", "message": "DB not connected"}), 500
+
     data = request.get_json()
 
     user_id = data.get("user_id")
@@ -88,29 +95,22 @@ def send_alert():
     if not user_id:
         return jsonify({"status": "error", "message": "Missing data"}), 400
 
-    # STEP 1: GOOGLE → nearest police
     station_name = get_nearest_police(latitude, longitude)
 
-
-    # ✅ STEP 2: DB → get phone (FIXED INDENTATION)
     cursor.execute("SELECT phone FROM police_stations LIMIT 1")
     result = cursor.fetchone()
 
-    if result and result["phone"]:
-        police_phone = result["phone"]
-    else:
-        police_phone = "+919037716754"
+    police_phone = result["phone"] if result and result["phone"] else "+919037716754"
 
-    print("POLICE PHONE:", police_phone)
-
-    # STEP 3: SAVE ALERT
     cursor.execute(
         "INSERT INTO alerts (user_id, latitude, longitude, timestamp) VALUES (%s,%s,%s,%s)",
         (user_id, latitude, longitude, datetime.now())
     )
     db.commit()
 
-    # STEP 4: SEND SMS
+    if not client:
+        return jsonify({"status": "error", "message": "Twilio not configured"}), 500
+
     try:
         msg = client.messages.create(
             body=f"EMERGENCY ALERT\nUser: {user_id}\nLocation: https://maps.google.com/?q={latitude},{longitude}\nNearest Police: {station_name}",
@@ -118,25 +118,18 @@ def send_alert():
             to=police_phone
         )
 
-        print("SMS SENT:", msg.sid)
-
-        return jsonify({
-            "status": "success",
-            "sid": msg.sid
-        })
+        return jsonify({"status": "success", "sid": msg.sid})
 
     except Exception as e:
-        print("SMS ERROR FULL:", str(e))
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
 # ---------------- REGISTER ----------------
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.get_json()
+    if not cursor:
+        return jsonify({"status": "error", "message": "DB not connected"}), 500
 
+    data = request.get_json()
     hashed_password = generate_password_hash(data["password"])
 
     try:
@@ -152,6 +145,9 @@ def register():
 # ---------------- LOGIN ----------------
 @app.route("/login", methods=["POST"])
 def login():
+    if not cursor:
+        return jsonify({"status": "error", "message": "DB not connected"}), 500
+
     data = request.get_json()
 
     cursor.execute("SELECT * FROM users WHERE email=%s", (data["email"],))
@@ -165,6 +161,9 @@ def login():
 # ---------------- FORGOT PASSWORD ----------------
 @app.route("/forgot_password", methods=["POST"])
 def forgot_password():
+    if not cursor:
+        return jsonify({"status": "error", "message": "DB not connected"}), 500
+
     data = request.get_json()
     email = data.get("email")
 
@@ -182,17 +181,17 @@ def forgot_password():
     )
     db.commit()
 
-    # SEND EMAIL
-    msg = Message(
-        subject="Password Reset OTP",
-        sender=app.config['MAIL_USERNAME'],
-        recipients=[email]
-    )
-    msg.body = f"Your OTP is {otp}"
+    if not mail:
+        return jsonify({"status": "error", "message": "Mail not configured"}), 500
 
     try:
+        msg = Message(
+            subject="Password Reset OTP",
+            sender=app.config['MAIL_USERNAME'],
+            recipients=[email]
+        )
+        msg.body = f"Your OTP is {otp}"
         mail.send(msg)
-        print("EMAIL SENT")
     except Exception as e:
         print("EMAIL ERROR:", e)
 
@@ -201,6 +200,9 @@ def forgot_password():
 # ---------------- RESET PASSWORD ----------------
 @app.route("/reset_password", methods=["POST"])
 def reset_password():
+    if not cursor:
+        return jsonify({"status": "error", "message": "DB not connected"}), 500
+
     data = request.get_json()
 
     cursor.execute(
@@ -221,4 +223,3 @@ def reset_password():
     db.commit()
 
     return jsonify({"status": "success"})
-
